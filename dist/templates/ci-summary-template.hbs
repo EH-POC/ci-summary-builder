@@ -1,0 +1,26 @@
+<!-- ci-summary-sticky -->
+<h1>CI Summary</h1>
+
+<h2>Required:</h2>
+<ul>
+  {{#each data.items}}
+    {{#if required}}
+      <!-- ci-item-{{name}}-start -->
+      <li><code>{{name}}</code>{{#if (eq status "success")}}✅ <strong>Success</strong>{{/if}}{{#if (eq status "failure")}}❌ <strong>Failure</strong>{{/if}}{{#if (eq status "cancelled")}}⏹ <strong>Cancelled</strong>{{/if}}{{#if (eq status "skipped")}}➡ <strong>Skipped</strong>{{/if}}{{#if (eq status "pending")}}⏳ <strong>Pending</strong>{{/if}}{{#if reference}} <a href="{{reference}}">Ref</a>{{/if}}{{#if errors}} <details><summary>Errors details ({{errors.length}})</summary><ul>{{#each errors}}<li>{{this}}</li>{{/each}}</ul></details>{{/if}}</li>
+      <!-- ci-item-{{name}}-end -->
+    {{/if}}
+  {{/each}}
+</ul>
+
+<h2>Optional:</h2>
+<ul>
+  {{#each data.items}}
+    {{#unless required}}
+      <!-- ci-item-{{name}}-start -->
+      <li><code>{{name}}</code>{{#if (eq status "success")}}✅ <strong>Success</strong>{{/if}}{{#if (eq status "failure")}}❌ <strong>Failure</strong>{{/if}}{{#if (eq status "cancelled")}}⏹ <strong>Cancelled</strong>{{/if}}{{#if (eq status "skipped")}}➡ <strong>Skipped</strong>{{/if}}{{#if (eq status "pending")}}⏳ <strong>Pending</strong>{{/if}}{{#if reference}} <a href="{{reference}}">Ref</a>{{/if}}{{#if errors}} <details><summary>Errors details ({{errors.length}})</summary><ul>{{#each errors}}<li>{{this}}</li>{{/each}}</ul></details>{{/if}}</li>
+      <!-- ci-item-{{name}}-end -->
+    {{/unless}}
+  {{/each}}
+</ul>
+
+<p>This comment is created or updated at: {{data.datetime}}</p>

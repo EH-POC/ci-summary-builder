@@ -3,14 +3,22 @@ import { context } from '@actions/github'
 import {
   addCommentToPullRequest,
   getCiSummaryComment,
+  getCommentById,
   updateCommentOnPullRequest
 } from 'src/client/github'
-import { parseCiSummaryCommentToData } from 'src/helpers/ci-summary'
-import { getAllGitHubContext } from 'src/utils/github-utils'
+import {
+  parseCiSummaryCommentToData,
+  parseCreateOrUpdateTime
+} from 'src/helpers/ci-summary'
 import { readJsonFile, readTemplate } from '../utils/file-utils'
 import { generateMarkdown } from '../utils/markdown-utils'
 
-type WorkflowInput = {
+// Configuration
+const MAX_RETRY_ATTEMPTS = 5
+const RETRY_DELAY_MS = 5000
+
+// Types
+type WorkflowData = {
   name: string
   required: boolean
   status: string
@@ -18,55 +26,61 @@ type WorkflowInput = {
   errors?: string[]
 }
 
+type ActionInputs = {
+  initJsonFilePath: string
+  pullRequest: string
+  workflow: WorkflowData
+}
+
 export async function runAction(): Promise<void> {
   try {
     const inputs = getActionInputs()
     validateInputs(inputs)
 
-    const templateSource = readTemplate('../templates/ci-summary-template.hbs')
-    const jsonData = inputs.initJsonFilePath
+    const templateSource = readTemplate('templates/ci-summary-template.hbs')
+    const initialData = inputs.initJsonFilePath
       ? readJsonFile(inputs.initJsonFilePath)
       : {}
-    const markdown = generateMarkdown(templateSource, jsonData)
+
+    const markdown = generateMarkdown(templateSource, {
+      ...initialData,
+      datetime: new Date().toISOString()
+    })
+    if (inputs.initJsonFilePath) {
+      console.log('DEBUG: initial markdown:', markdown)
+    }
 
     if (inputs.pullRequest && context.eventName === 'pull_request') {
       await handlePullRequestAction(inputs, templateSource, markdown)
     }
-
-    logAndOutputResults(markdown, inputs.summary)
   } catch (error) {
     handleError(error)
   }
 }
 
-function getActionInputs() {
-  console.log('====================DEBUG====================')
-  console.log(
-    core.getInput('workflow-required'),
-    typeof core.getInput('workflow-required')
-  )
-  console.log(
-    core.getInput('workflow-run-errors'),
-    typeof core.getInput('workflow-run-errors')
-  )
-  console.log('====================DEBUG====================')
+function getActionInputs(): ActionInputs {
+  const workflowRunErrors = core.getInput('workflow-run-errors')
+  const parsedErrors = workflowRunErrors
+    ? JSON.parse(workflowRunErrors)
+    : undefined
+
   return {
     initJsonFilePath: core.getInput('init-json-file-path'),
     pullRequest: core.getInput('pull-request'),
-    summary: core.getInput('summary'),
     workflow: {
       name: core.getInput('workflow-name'),
       required: core.getInput('workflow-required') === 'true',
       status: core.getInput('workflow-status'),
       runUrl: core.getInput('workflow-run-url'),
-      errors: core.getInput('workflow-run-errors') as unknown as string[]
+      errors: parsedErrors
     }
   }
 }
 
-function validateInputs(inputs: ReturnType<typeof getActionInputs>) {
+function validateInputs(inputs: ActionInputs): void {
   const { initJsonFilePath, workflow } = inputs
 
+  // Validate that init-json-file-path is used exclusively
   if (
     initJsonFilePath &&
     (workflow.name ||
@@ -76,26 +90,32 @@ function validateInputs(inputs: ReturnType<typeof getActionInputs>) {
       workflow.errors)
   ) {
     throw new Error(
-      'Do not provide any other input if you provide init-json-file-path'
+      'When providing init-json-file-path, do not provide any workflow-related inputs'
     )
   }
 
+  // Validate required workflow inputs when not using init-json-file-path
   if (
     !initJsonFilePath &&
-    (!workflow.name || !workflow.required || !workflow.runUrl)
+    (!workflow.name || workflow.required === undefined || !workflow.runUrl)
   ) {
-    throw new Error('Missing required inputs to update the existing CI Summary')
+    throw new Error(
+      'Missing required workflow inputs workflow-name, workflow-required, workflow-run-url'
+    )
   }
 }
 
+/**
+ * Handles the action for a pull request context
+ */
 async function handlePullRequestAction(
-  inputs: ReturnType<typeof getActionInputs>,
+  inputs: ActionInputs,
   templateSource: string,
   initialMarkdown: string
 ): Promise<void> {
   const { initJsonFilePath, workflow } = inputs
 
-  // If initializing with JSON file, create a new comment
+  // Initialize with JSON file - create a new comment
   if (initJsonFilePath) {
     await addCommentToPullRequest(
       context.repo.owner,
@@ -106,85 +126,117 @@ async function handlePullRequestAction(
     return
   }
 
-  // Otherwise update existing comment with new workflow data
-  try {
+  // Update existing comment with new workflow data
+  await updateExistingCommentWithRetry(workflow, templateSource)
+}
+
+/**
+ * Updates an existing CI summary comment with retry logic for handling concurrency
+ */
+async function updateExistingCommentWithRetry(
+  workflow: WorkflowData,
+  templateSource: string
+): Promise<void> {
+  for (let attempt = 1; attempt <= MAX_RETRY_ATTEMPTS; attempt++) {
+    // Get the current comment
     const comment = await getCiSummaryComment(context)
 
     if (!comment) {
-      await addCommentToPullRequest(
-        context.repo.owner,
-        context.repo.repo,
-        context.issue.number,
-        initialMarkdown
+      throw new Error(
+        'No CI Summary comment found. Please initialize a CI Summary first by running this action with init-json-file-path input.'
       )
-      return
     }
 
-    await updateExistingComment(comment, workflow, templateSource)
-  } catch (error) {
-    // Handle specific API errors
-    if (error instanceof Error) {
-      core.warning(`Error handling comment: ${error.message}`)
-      // Could implement retry logic here
+    // Parse the current data
+    const summaryData = parseCiSummaryCommentToData(comment.body)
+
+    // Update workflow data
+    const updatedSummaryData = updateWorkflowInSummary(summaryData, workflow)
+    console.log('DEBUG: updated summary data:', {
+      ...updatedSummaryData,
+      datetime: new Date().toISOString()
+    })
+
+    // Generate the new markdown
+    const newMarkdown = generateMarkdown(templateSource, {
+      ...updatedSummaryData,
+      datetime: new Date().toISOString()
+    })
+    console.log('DEBUG: updated markdown:', newMarkdown)
+
+    // Final verification immediately before update to prevent race conditions
+    const finalCheck = await getCommentById(context, Number(comment.id))
+    const finalCheckDate = parseCreateOrUpdateTime(finalCheck.body)
+
+    if (finalCheckDate !== summaryData.datetime) {
+      core.info(
+        `Detected concurrent update right before committing changes (attempt ${attempt}/${MAX_RETRY_ATTEMPTS})`
+      )
+
+      if (attempt < MAX_RETRY_ATTEMPTS) {
+        await sleep(RETRY_DELAY_MS * attempt) // Exponential backoff
+        continue
+      } else {
+        throw new Error(
+          'Maximum retry attempts reached due to concurrent updates'
+        )
+      }
     }
-    throw error
+
+    // Update the comment with the new markdown
+    await updateCommentOnPullRequest({
+      owner: context.repo.owner,
+      repo: context.repo.repo,
+      comment_id: Number(comment.id),
+      body: newMarkdown
+    })
+
+    core.info('Successfully updated CI Summary comment')
+    return
   }
 }
 
-async function updateExistingComment(
-  comment: any,
-  workflow: WorkflowInput,
-  templateSource: string
-): Promise<void> {
-  // Parse and update the comment data
-  const summaryData = parseCiSummaryCommentToData(comment.body)
-
-  // Prepare the new CI item
+/**
+ * Updates or adds a workflow to the summary data
+ */
+function updateWorkflowInSummary(
+  summaryData: { items: any[]; datetime?: string },
+  workflow: WorkflowData
+): { items: any[]; datetime?: string } {
   const newCIItem = {
     name: workflow.name,
     required: workflow.required,
     status: workflow.status,
     reference: workflow.runUrl,
-    errors: workflow.errors ? workflow.errors : undefined
+    errors: workflow.errors
   }
 
-  // Update or add the workflow item
   const index = summaryData.items.findIndex(item => item.name === workflow.name)
+
+  const updatedItems = [...summaryData.items]
   if (index === -1) {
-    summaryData.items.push(newCIItem)
+    updatedItems.push(newCIItem)
   } else {
-    summaryData.items[index] = newCIItem
+    updatedItems[index] = newCIItem
   }
 
-  // Generate new markdown and update comment
-  const newMarkdown = generateMarkdown(templateSource, summaryData)
-
-  await updateCommentOnPullRequest({
-    owner: context.repo.owner,
-    repo: context.repo.repo,
-    comment_id: Number(comment.id),
-    body: newMarkdown,
-    refreshMessagePosition: false,
-    issueNumber: context.issue.number
-  })
-}
-
-function logAndOutputResults(markdown: string, summary?: string): void {
-  console.log('Generated Markdown:')
-  console.log(markdown)
-
-  if (summary) {
-    core.summary.addRaw(markdown).write()
+  return {
+    ...summaryData,
+    items: updatedItems
   }
-
-  getAllGitHubContext()
-  core.setOutput('markdown', markdown)
 }
 
 function handleError(error: unknown): void {
   if (error instanceof Error) {
     core.setFailed(`Action failed with error: ${error.message}`)
   } else {
-    core.setFailed('Action failed with an unknown error')
+    core.setFailed(`Action failed with an unknown error: ${String(error)}`)
   }
+}
+
+/**
+ * Helper function to sleep for a specified duration
+ */
+async function sleep(ms: number): Promise<void> {
+  return new Promise(resolve => setTimeout(resolve, ms))
 }

@@ -1,4 +1,5 @@
 import * as fs from 'fs'
+import * as path from 'path'
 
 export function readTemplate(filePath: string): string {
   if (!filePath.endsWith('.hbs') && !filePath.endsWith('.md')) {
@@ -6,10 +7,15 @@ export function readTemplate(filePath: string): string {
       `File must have a handlebars or markdown extension: ${filePath}`
     )
   }
-  if (!fs.existsSync(filePath)) {
-    throw new Error(`Template file not found: ${filePath}`)
+  
+  // Resolve path relative to the action's directory structure
+  const actionDir = path.dirname(require.resolve('../../package.json'))
+  const absolutePath = path.join(actionDir, filePath)
+  
+  if (!fs.existsSync(absolutePath)) {
+    throw new Error(`Template file not found: ${absolutePath}`)
   }
-  return fs.readFileSync(filePath, 'utf-8')
+  return fs.readFileSync(absolutePath, 'utf-8')
 }
 
 export function readJsonFile(filePath: string): any {

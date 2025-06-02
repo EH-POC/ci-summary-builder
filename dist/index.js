@@ -38311,7 +38311,7 @@ var __importStar = (this && this.__importStar) || function (mod) {
     return result;
 };
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.getCiSummaryComment = void 0;
+exports.getCommentById = exports.getCiSummaryComment = void 0;
 exports.createGitHubClient = createGitHubClient;
 exports.addCommentToPullRequest = addCommentToPullRequest;
 exports.updateCommentOnPullRequest = updateCommentOnPullRequest;
@@ -38334,22 +38334,8 @@ async function addCommentToPullRequest(owner, repo, pull_number, body) {
     });
     return data;
 }
-async function updateCommentOnPullRequest({ owner, repo, comment_id, body, refreshMessagePosition, issueNumber }) {
+async function updateCommentOnPullRequest({ owner, repo, comment_id, body }) {
     const octokit = await createGitHubClient();
-    if (refreshMessagePosition) {
-        await octokit.issues.deleteComment({
-            owner,
-            repo,
-            comment_id
-        });
-        const { data } = await octokit.issues.createComment({
-            owner,
-            repo,
-            issue_number: issueNumber,
-            body
-        });
-        return data;
-    }
     const { data } = await octokit.issues.updateComment({
         owner,
         repo,
@@ -38360,7 +38346,7 @@ async function updateCommentOnPullRequest({ owner, repo, comment_id, body, refre
 }
 const getCiSummaryComment = async (context) => {
     const octokit = await createGitHubClient();
-    const marker = '<!-- ci-summary-start -->';
+    const marker = '<!-- ci-summary-sticky -->';
     const comments = await octokit.paginate(octokit.issues.listComments, {
         owner: context.repo.owner,
         repo: context.repo.repo,
@@ -38368,9 +38354,21 @@ const getCiSummaryComment = async (context) => {
         per_page: 100
     });
     const ciSummaryComment = comments.find((comment) => comment.body.includes(marker));
+    console.log('DEBUG: ciSummaryComment:', ciSummaryComment.body);
     return ciSummaryComment;
 };
 exports.getCiSummaryComment = getCiSummaryComment;
+const getCommentById = async (context, comment_id) => {
+    const octokit = await createGitHubClient();
+    const { data } = await octokit.issues.getComment({
+        owner: context.repo.owner,
+        repo: context.repo.repo,
+        comment_id
+    });
+    console.log('DEBUG: getCommentById:', data.body);
+    return data;
+};
+exports.getCommentById = getCommentById;
 
 
 /***/ }),
@@ -38409,131 +38407,166 @@ const core = __importStar(__nccwpck_require__(7484));
 const github_1 = __nccwpck_require__(3228);
 const github_2 = __nccwpck_require__(3208);
 const ci_summary_1 = __nccwpck_require__(1048);
-const github_utils_1 = __nccwpck_require__(5210);
 const file_utils_1 = __nccwpck_require__(2291);
 const markdown_utils_1 = __nccwpck_require__(4680);
+// Configuration
+const MAX_RETRY_ATTEMPTS = 5;
+const RETRY_DELAY_MS = 5000;
 async function runAction() {
     try {
         const inputs = getActionInputs();
         validateInputs(inputs);
-        const templateSource = (0, file_utils_1.readTemplate)('../templates/ci-summary-template.hbs');
-        const jsonData = inputs.initJsonFilePath
+        const templateSource = (0, file_utils_1.readTemplate)('templates/ci-summary-template.hbs');
+        const initialData = inputs.initJsonFilePath
             ? (0, file_utils_1.readJsonFile)(inputs.initJsonFilePath)
             : {};
-        const markdown = (0, markdown_utils_1.generateMarkdown)(templateSource, jsonData);
+        const markdown = (0, markdown_utils_1.generateMarkdown)(templateSource, {
+            ...initialData,
+            datetime: new Date().toISOString()
+        });
+        if (inputs.initJsonFilePath) {
+            console.log('DEBUG: initial markdown:', markdown);
+        }
         if (inputs.pullRequest && github_1.context.eventName === 'pull_request') {
             await handlePullRequestAction(inputs, templateSource, markdown);
         }
-        logAndOutputResults(markdown, inputs.summary);
     }
     catch (error) {
         handleError(error);
     }
 }
 function getActionInputs() {
-    console.log('====================DEBUG====================');
-    console.log(core.getInput('workflow-required'), typeof core.getInput('workflow-required'));
-    console.log(core.getInput('workflow-run-errors'), typeof core.getInput('workflow-run-errors'));
-    console.log('====================DEBUG====================');
+    const workflowRunErrors = core.getInput('workflow-run-errors');
+    const parsedErrors = workflowRunErrors
+        ? JSON.parse(workflowRunErrors)
+        : undefined;
     return {
         initJsonFilePath: core.getInput('init-json-file-path'),
         pullRequest: core.getInput('pull-request'),
-        summary: core.getInput('summary'),
         workflow: {
             name: core.getInput('workflow-name'),
             required: core.getInput('workflow-required') === 'true',
             status: core.getInput('workflow-status'),
             runUrl: core.getInput('workflow-run-url'),
-            errors: core.getInput('workflow-run-errors')
+            errors: parsedErrors
         }
     };
 }
 function validateInputs(inputs) {
     const { initJsonFilePath, workflow } = inputs;
+    // Validate that init-json-file-path is used exclusively
     if (initJsonFilePath &&
         (workflow.name ||
             workflow.required ||
             workflow.status ||
             workflow.runUrl ||
             workflow.errors)) {
-        throw new Error('Do not provide any other input if you provide init-json-file-path');
+        throw new Error('When providing init-json-file-path, do not provide any workflow-related inputs');
     }
+    // Validate required workflow inputs when not using init-json-file-path
     if (!initJsonFilePath &&
-        (!workflow.name || !workflow.required || !workflow.runUrl)) {
-        throw new Error('Missing required inputs to update the existing CI Summary');
+        (!workflow.name || workflow.required === undefined || !workflow.runUrl)) {
+        throw new Error('Missing required workflow inputs workflow-name, workflow-required, workflow-run-url');
     }
 }
+/**
+ * Handles the action for a pull request context
+ */
 async function handlePullRequestAction(inputs, templateSource, initialMarkdown) {
     const { initJsonFilePath, workflow } = inputs;
-    // If initializing with JSON file, create a new comment
+    // Initialize with JSON file - create a new comment
     if (initJsonFilePath) {
         await (0, github_2.addCommentToPullRequest)(github_1.context.repo.owner, github_1.context.repo.repo, github_1.context.issue.number, initialMarkdown);
         return;
     }
-    // Otherwise update existing comment with new workflow data
-    try {
+    // Update existing comment with new workflow data
+    await updateExistingCommentWithRetry(workflow, templateSource);
+}
+/**
+ * Updates an existing CI summary comment with retry logic for handling concurrency
+ */
+async function updateExistingCommentWithRetry(workflow, templateSource) {
+    for (let attempt = 1; attempt <= MAX_RETRY_ATTEMPTS; attempt++) {
+        // Get the current comment
         const comment = await (0, github_2.getCiSummaryComment)(github_1.context);
         if (!comment) {
-            await (0, github_2.addCommentToPullRequest)(github_1.context.repo.owner, github_1.context.repo.repo, github_1.context.issue.number, initialMarkdown);
-            return;
+            throw new Error('No CI Summary comment found. Please initialize a CI Summary first by running this action with init-json-file-path input.');
         }
-        await updateExistingComment(comment, workflow, templateSource);
-    }
-    catch (error) {
-        // Handle specific API errors
-        if (error instanceof Error) {
-            core.warning(`Error handling comment: ${error.message}`);
-            // Could implement retry logic here
+        // Parse the current data
+        const summaryData = (0, ci_summary_1.parseCiSummaryCommentToData)(comment.body);
+        // Update workflow data
+        const updatedSummaryData = updateWorkflowInSummary(summaryData, workflow);
+        console.log('DEBUG: updated summary data:', {
+            ...updatedSummaryData,
+            datetime: new Date().toISOString()
+        });
+        // Generate the new markdown
+        const newMarkdown = (0, markdown_utils_1.generateMarkdown)(templateSource, {
+            ...updatedSummaryData,
+            datetime: new Date().toISOString()
+        });
+        console.log('DEBUG: updated markdown:', newMarkdown);
+        // Final verification immediately before update to prevent race conditions
+        const finalCheck = await (0, github_2.getCommentById)(github_1.context, Number(comment.id));
+        const finalCheckDate = (0, ci_summary_1.parseCreateOrUpdateTime)(finalCheck.body);
+        if (finalCheckDate !== summaryData.datetime) {
+            core.info(`Detected concurrent update right before committing changes (attempt ${attempt}/${MAX_RETRY_ATTEMPTS})`);
+            if (attempt < MAX_RETRY_ATTEMPTS) {
+                await sleep(RETRY_DELAY_MS * attempt); // Exponential backoff
+                continue;
+            }
+            else {
+                throw new Error('Maximum retry attempts reached due to concurrent updates');
+            }
         }
-        throw error;
+        // Update the comment with the new markdown
+        await (0, github_2.updateCommentOnPullRequest)({
+            owner: github_1.context.repo.owner,
+            repo: github_1.context.repo.repo,
+            comment_id: Number(comment.id),
+            body: newMarkdown
+        });
+        core.info('Successfully updated CI Summary comment');
+        return;
     }
 }
-async function updateExistingComment(comment, workflow, templateSource) {
-    // Parse and update the comment data
-    const summaryData = (0, ci_summary_1.parseCiSummaryCommentToData)(comment.body);
-    // Prepare the new CI item
+/**
+ * Updates or adds a workflow to the summary data
+ */
+function updateWorkflowInSummary(summaryData, workflow) {
     const newCIItem = {
         name: workflow.name,
         required: workflow.required,
         status: workflow.status,
         reference: workflow.runUrl,
-        errors: workflow.errors ? workflow.errors : undefined
+        errors: workflow.errors
     };
-    // Update or add the workflow item
     const index = summaryData.items.findIndex(item => item.name === workflow.name);
+    const updatedItems = [...summaryData.items];
     if (index === -1) {
-        summaryData.items.push(newCIItem);
+        updatedItems.push(newCIItem);
     }
     else {
-        summaryData.items[index] = newCIItem;
+        updatedItems[index] = newCIItem;
     }
-    // Generate new markdown and update comment
-    const newMarkdown = (0, markdown_utils_1.generateMarkdown)(templateSource, summaryData);
-    await (0, github_2.updateCommentOnPullRequest)({
-        owner: github_1.context.repo.owner,
-        repo: github_1.context.repo.repo,
-        comment_id: Number(comment.id),
-        body: newMarkdown,
-        refreshMessagePosition: false,
-        issueNumber: github_1.context.issue.number
-    });
-}
-function logAndOutputResults(markdown, summary) {
-    console.log('Generated Markdown:');
-    console.log(markdown);
-    if (summary) {
-        core.summary.addRaw(markdown).write();
-    }
-    (0, github_utils_1.getAllGitHubContext)();
-    core.setOutput('markdown', markdown);
+    return {
+        ...summaryData,
+        items: updatedItems
+    };
 }
 function handleError(error) {
     if (error instanceof Error) {
         core.setFailed(`Action failed with error: ${error.message}`);
     }
     else {
-        core.setFailed('Action failed with an unknown error');
+        core.setFailed(`Action failed with an unknown error: ${String(error)}`);
     }
+}
+/**
+ * Helper function to sleep for a specified duration
+ */
+async function sleep(ms) {
+    return new Promise(resolve => setTimeout(resolve, ms));
 }
 
 
@@ -38572,10 +38605,16 @@ function runLocal() {
 "use strict";
 
 Object.defineProperty(exports, "__esModule", ({ value: true }));
-exports.parseCiSummaryCommentToData = void 0;
+exports.parseCreateOrUpdateTime = exports.parseCiSummaryCommentToData = void 0;
 const parseCiSummaryCommentToData = (currentReport) => {
     const itemRegex = /<!-- ci-item-(.+?)-start -->([\s\S]*?)<!-- ci-item-\1-end -->/g;
     const items = [];
+    // Extract datetime if present
+    let datetime = undefined;
+    const dateMatch = currentReport.match(/<p>This comment is created or updated at: (.*?)<\/p>/i);
+    if (dateMatch && dateMatch[1]) {
+        datetime = dateMatch[1];
+    }
     let match;
     while ((match = itemRegex.exec(currentReport)) !== null) {
         const name = match[1];
@@ -38618,9 +38657,7 @@ const parseCiSummaryCommentToData = (currentReport) => {
                     return errorText;
                 });
             }
-            console.log(`Found ${errors.length} errors for ${name}`);
         }
-        console.log(`Parsed item: ${name}, status: ${status}, ref: ${reference}, required: ${required}, errors: ${errors.length}`);
         items.push({
             name,
             required,
@@ -38629,9 +38666,17 @@ const parseCiSummaryCommentToData = (currentReport) => {
             errors: errors.length > 0 ? errors : undefined
         });
     }
-    return { items };
+    return { items, datetime };
 };
 exports.parseCiSummaryCommentToData = parseCiSummaryCommentToData;
+const parseCreateOrUpdateTime = (currentReport) => {
+    const dateMatch = currentReport.match(/<p>This comment is created or updated at: (.*?)<\/p>/i);
+    if (dateMatch && dateMatch[1]) {
+        return dateMatch[1];
+    }
+    return undefined;
+};
+exports.parseCreateOrUpdateTime = parseCreateOrUpdateTime;
 
 
 /***/ }),
@@ -38820,14 +38865,18 @@ Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.readTemplate = readTemplate;
 exports.readJsonFile = readJsonFile;
 const fs = __importStar(__nccwpck_require__(9896));
+const path = __importStar(__nccwpck_require__(6928));
 function readTemplate(filePath) {
     if (!filePath.endsWith('.hbs') && !filePath.endsWith('.md')) {
         throw new Error(`File must have a handlebars or markdown extension: ${filePath}`);
     }
-    if (!fs.existsSync(filePath)) {
-        throw new Error(`Template file not found: ${filePath}`);
+    // Resolve path relative to the action's directory structure
+    const actionDir = path.dirname(__nccwpck_require__.ab + "package.json");
+    const absolutePath = path.join(actionDir, filePath);
+    if (!fs.existsSync(absolutePath)) {
+        throw new Error(`Template file not found: ${absolutePath}`);
     }
-    return fs.readFileSync(filePath, 'utf-8');
+    return fs.readFileSync(absolutePath, 'utf-8');
 }
 function readJsonFile(filePath) {
     if (!fs.existsSync(filePath)) {

@@ -8,10 +8,19 @@ type CiSummaryItem = {
 
 export const parseCiSummaryCommentToData = (
   currentReport: string
-): { items: CiSummaryItem[] } => {
+): { items: CiSummaryItem[]; datetime?: string } => {
   const itemRegex =
     /<!-- ci-item-(.+?)-start -->([\s\S]*?)<!-- ci-item-\1-end -->/g
   const items = []
+
+  // Extract datetime if present
+  let datetime = undefined
+  const dateMatch = currentReport.match(
+    /<p>This comment is created or updated at: (.*?)<\/p>/i
+  )
+  if (dateMatch && dateMatch[1]) {
+    datetime = dateMatch[1]
+  }
 
   let match
   while ((match = itemRegex.exec(currentReport)) !== null) {
@@ -63,13 +72,7 @@ export const parseCiSummaryCommentToData = (
           return errorText
         })
       }
-
-      console.log(`Found ${errors.length} errors for ${name}`)
     }
-
-    console.log(
-      `Parsed item: ${name}, status: ${status}, ref: ${reference}, required: ${required}, errors: ${errors.length}`
-    )
 
     items.push({
       name,
@@ -80,5 +83,17 @@ export const parseCiSummaryCommentToData = (
     })
   }
 
-  return { items }
+  return { items, datetime }
+}
+
+export const parseCreateOrUpdateTime = (
+  currentReport: string
+): string | undefined => {
+  const dateMatch = currentReport.match(
+    /<p>This comment is created or updated at: (.*?)<\/p>/i
+  )
+  if (dateMatch && dateMatch[1]) {
+    return dateMatch[1]
+  }
+  return undefined
 }

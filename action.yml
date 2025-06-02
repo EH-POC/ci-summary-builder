@@ -33,10 +33,6 @@ inputs:
     description: 'Create a pull request comment or not'
     required: false
     default: true
-  summary:
-    description: 'Post markdown to GitHub Action summary'
-    required: false
-    default: false
 
 # Define your outputs here, if necessary.
 outputs:

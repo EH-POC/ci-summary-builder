@@ -32,35 +32,14 @@ export async function updateCommentOnPullRequest({
   owner,
   repo,
   comment_id,
-  body,
-  refreshMessagePosition,
-  issueNumber
+  body
 }: {
   owner: string
   repo: string
   comment_id: number
   body: string
-  refreshMessagePosition: boolean
-  issueNumber: number
 }): Promise<any> {
   const octokit = await createGitHubClient()
-
-  if (refreshMessagePosition) {
-    await octokit.issues.deleteComment({
-      owner,
-      repo,
-      comment_id
-    })
-
-    const { data } = await octokit.issues.createComment({
-      owner,
-      repo,
-      issue_number: issueNumber,
-      body
-    })
-
-    return data
-  }
 
   const { data } = await octokit.issues.updateComment({
     owner,
@@ -75,7 +54,7 @@ export async function updateCommentOnPullRequest({
 export const getCiSummaryComment = async (context: Context): Promise<any> => {
   const octokit = await createGitHubClient()
 
-  const marker = '<!-- ci-summary-start -->'
+  const marker = '<!-- ci-summary-sticky -->'
 
   const comments = await octokit.paginate(octokit.issues.listComments, {
     owner: context.repo.owner,
@@ -88,5 +67,24 @@ export const getCiSummaryComment = async (context: Context): Promise<any> => {
     comment.body.includes(marker)
   )
 
+  console.log('DEBUG: ciSummaryComment:', ciSummaryComment.body)
+
   return ciSummaryComment
+}
+
+export const getCommentById = async (
+  context: Context,
+  comment_id: number
+): Promise<any> => {
+  const octokit = await createGitHubClient()
+
+  const { data } = await octokit.issues.getComment({
+    owner: context.repo.owner,
+    repo: context.repo.repo,
+    comment_id
+  })
+
+  console.log('DEBUG: getCommentById:', data.body)
+
+  return data
 }
