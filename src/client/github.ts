@@ -67,8 +67,6 @@ export const getCiSummaryComment = async (context: Context): Promise<any> => {
     comment.body.includes(marker)
   )
 
-  console.log('DEBUG: ciSummaryComment:', ciSummaryComment.body)
-
   return ciSummaryComment
 }
 
@@ -83,8 +81,6 @@ export const getCommentById = async (
     repo: context.repo.repo,
     comment_id
   })
-
-  console.log('DEBUG: getCommentById:', data.body)
 
   return data
 }

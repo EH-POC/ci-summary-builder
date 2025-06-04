@@ -38303,13 +38303,23 @@ var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (
 }) : function(o, v) {
     o["default"] = v;
 });
-var __importStar = (this && this.__importStar) || function (mod) {
-    if (mod && mod.__esModule) return mod;
-    var result = {};
-    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
-    __setModuleDefault(result, mod);
-    return result;
-};
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.getCommentById = exports.getCiSummaryComment = void 0;
 exports.createGitHubClient = createGitHubClient;
@@ -38354,7 +38364,6 @@ const getCiSummaryComment = async (context) => {
         per_page: 100
     });
     const ciSummaryComment = comments.find((comment) => comment.body.includes(marker));
-    console.log('DEBUG: ciSummaryComment:', ciSummaryComment.body);
     return ciSummaryComment;
 };
 exports.getCiSummaryComment = getCiSummaryComment;
@@ -38365,7 +38374,6 @@ const getCommentById = async (context, comment_id) => {
         repo: context.repo.repo,
         comment_id
     });
-    console.log('DEBUG: getCommentById:', data.body);
     return data;
 };
 exports.getCommentById = getCommentById;
@@ -38394,13 +38402,23 @@ var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (
 }) : function(o, v) {
     o["default"] = v;
 });
-var __importStar = (this && this.__importStar) || function (mod) {
-    if (mod && mod.__esModule) return mod;
-    var result = {};
-    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
-    __setModuleDefault(result, mod);
-    return result;
-};
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.runAction = runAction;
 const core = __importStar(__nccwpck_require__(7484));
@@ -38496,19 +38514,19 @@ async function updateExistingCommentWithRetry(workflow, templateSource) {
         const summaryData = (0, ci_summary_1.parseCiSummaryCommentToData)(comment.body);
         // Update workflow data
         const updatedSummaryData = updateWorkflowInSummary(summaryData, workflow);
-        console.log('DEBUG: updated summary data:', {
-            ...updatedSummaryData,
-            datetime: new Date().toISOString()
-        });
+        console.log('DEBUG: current comment:', comment.body);
+        console.log('DEBUG: parsed data:', summaryData);
+        console.log('DEBUG: updated data:', updatedSummaryData);
         // Generate the new markdown
         const newMarkdown = (0, markdown_utils_1.generateMarkdown)(templateSource, {
             ...updatedSummaryData,
             datetime: new Date().toISOString()
         });
-        console.log('DEBUG: updated markdown:', newMarkdown);
         // Final verification immediately before update to prevent race conditions
         const finalCheck = await (0, github_2.getCommentById)(github_1.context, Number(comment.id));
         const finalCheckDate = (0, ci_summary_1.parseCreateOrUpdateTime)(finalCheck.body);
+        console.log('DEBUG: original datetime:', summaryData.datetime);
+        console.log('DEBUG: final check datetime:', finalCheckDate);
         if (finalCheckDate !== summaryData.datetime) {
             core.info(`Detected concurrent update right before committing changes (attempt ${attempt}/${MAX_RETRY_ATTEMPTS})`);
             if (attempt < MAX_RETRY_ATTEMPTS) {
@@ -38527,6 +38545,7 @@ async function updateExistingCommentWithRetry(workflow, templateSource) {
             body: newMarkdown
         });
         core.info('Successfully updated CI Summary comment');
+        console.log('DEBUG: Update to:', newMarkdown);
         return;
     }
 }
@@ -38615,12 +38634,21 @@ const parseCiSummaryCommentToData = (currentReport) => {
     if (dateMatch && dateMatch[1]) {
         datetime = dateMatch[1];
     }
+    // Extract section boundaries more reliably
+    const requiredSectionStart = currentReport.indexOf('<h2>Required:</h2>');
+    const optionalSectionStart = currentReport.indexOf('<h2>Optional:</h2>');
+    // Process each CI item
     let match;
-    while ((match = itemRegex.exec(currentReport)) !== null) {
+    // Clone the regex to reset lastIndex for each run
+    const itemRegexClone = new RegExp(itemRegex.source, itemRegex.flags);
+    while ((match = itemRegexClone.exec(currentReport)) !== null) {
         const name = match[1];
         const content = match[2];
-        const required = /<h2>Required:([\s\S]*?)<\/ul>/i.test(currentReport) &&
-            currentReport.indexOf(match[0]) < currentReport.indexOf('</ul>');
+        const matchPosition = match.index;
+        // An item is in the Required section if it appears after the Required heading
+        // and before the Optional heading
+        const required = matchPosition > requiredSectionStart &&
+            (optionalSectionStart === -1 || matchPosition < optionalSectionStart);
         // Extract status from various patterns
         let status = 'unknown';
         // Check for success indicators with updated emoji ✅
@@ -38702,13 +38730,23 @@ var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (
 }) : function(o, v) {
     o["default"] = v;
 });
-var __importStar = (this && this.__importStar) || function (mod) {
-    if (mod && mod.__esModule) return mod;
-    var result = {};
-    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
-    __setModuleDefault(result, mod);
-    return result;
-};
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.formatDurationHumanReadableHelper = formatDurationHumanReadableHelper;
 const handlebars = __importStar(__nccwpck_require__(8508));
@@ -38755,13 +38793,23 @@ var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (
 }) : function(o, v) {
     o["default"] = v;
 });
-var __importStar = (this && this.__importStar) || function (mod) {
-    if (mod && mod.__esModule) return mod;
-    var result = {};
-    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
-    __setModuleDefault(result, mod);
-    return result;
-};
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.eqHelper = eqHelper;
 const handlebars = __importStar(__nccwpck_require__(8508));
@@ -38814,13 +38862,23 @@ var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (
 }) : function(o, v) {
     o["default"] = v;
 });
-var __importStar = (this && this.__importStar) || function (mod) {
-    if (mod && mod.__esModule) return mod;
-    var result = {};
-    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
-    __setModuleDefault(result, mod);
-    return result;
-};
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.uppercaseHelper = uppercaseHelper;
 const handlebars = __importStar(__nccwpck_require__(8508));
@@ -38854,13 +38912,23 @@ var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (
 }) : function(o, v) {
     o["default"] = v;
 });
-var __importStar = (this && this.__importStar) || function (mod) {
-    if (mod && mod.__esModule) return mod;
-    var result = {};
-    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
-    __setModuleDefault(result, mod);
-    return result;
-};
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.readTemplate = readTemplate;
 exports.readJsonFile = readJsonFile;
@@ -38910,13 +38978,23 @@ var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (
 }) : function(o, v) {
     o["default"] = v;
 });
-var __importStar = (this && this.__importStar) || function (mod) {
-    if (mod && mod.__esModule) return mod;
-    var result = {};
-    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
-    __setModuleDefault(result, mod);
-    return result;
-};
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.getAllGitHubContext = getAllGitHubContext;
 const github = __importStar(__nccwpck_require__(3228));
@@ -39265,13 +39343,23 @@ var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (
 }) : function(o, v) {
     o["default"] = v;
 });
-var __importStar = (this && this.__importStar) || function (mod) {
-    if (mod && mod.__esModule) return mod;
-    var result = {};
-    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
-    __setModuleDefault(result, mod);
-    return result;
-};
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.compileTemplate = compileTemplate;
 const handlebars = __importStar(__nccwpck_require__(8508));

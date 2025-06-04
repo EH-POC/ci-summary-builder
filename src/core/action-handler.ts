@@ -152,21 +152,23 @@ async function updateExistingCommentWithRetry(
 
     // Update workflow data
     const updatedSummaryData = updateWorkflowInSummary(summaryData, workflow)
-    console.log('DEBUG: updated summary data:', {
-      ...updatedSummaryData,
-      datetime: new Date().toISOString()
-    })
+
+    console.log('DEBUG: current comment:', comment.body)
+    console.log('DEBUG: parsed data:', summaryData)
+    console.log('DEBUG: updated data:', updatedSummaryData)
 
     // Generate the new markdown
     const newMarkdown = generateMarkdown(templateSource, {
       ...updatedSummaryData,
       datetime: new Date().toISOString()
     })
-    console.log('DEBUG: updated markdown:', newMarkdown)
 
     // Final verification immediately before update to prevent race conditions
     const finalCheck = await getCommentById(context, Number(comment.id))
     const finalCheckDate = parseCreateOrUpdateTime(finalCheck.body)
+
+    console.log('DEBUG: original datetime:', summaryData.datetime)
+    console.log('DEBUG: final check datetime:', finalCheckDate)
 
     if (finalCheckDate !== summaryData.datetime) {
       core.info(
@@ -192,6 +194,7 @@ async function updateExistingCommentWithRetry(
     })
 
     core.info('Successfully updated CI Summary comment')
+    console.log('DEBUG: Update to:', newMarkdown)
     return
   }
 }

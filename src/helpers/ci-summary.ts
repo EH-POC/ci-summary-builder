@@ -22,14 +22,25 @@ export const parseCiSummaryCommentToData = (
     datetime = dateMatch[1]
   }
 
+  // Extract section boundaries more reliably
+  const requiredSectionStart = currentReport.indexOf('<h2>Required:</h2>')
+  const optionalSectionStart = currentReport.indexOf('<h2>Optional:</h2>')
+
+  // Process each CI item
   let match
-  while ((match = itemRegex.exec(currentReport)) !== null) {
+  // Clone the regex to reset lastIndex for each run
+  const itemRegexClone = new RegExp(itemRegex.source, itemRegex.flags)
+
+  while ((match = itemRegexClone.exec(currentReport)) !== null) {
     const name = match[1]
     const content = match[2]
+    const matchPosition = match.index
 
+    // An item is in the Required section if it appears after the Required heading
+    // and before the Optional heading
     const required =
-      /<h2>Required:([\s\S]*?)<\/ul>/i.test(currentReport) &&
-      currentReport.indexOf(match[0]) < currentReport.indexOf('</ul>')
+      matchPosition > requiredSectionStart &&
+      (optionalSectionStart === -1 || matchPosition < optionalSectionStart)
 
     // Extract status from various patterns
     let status = 'unknown'
