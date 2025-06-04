@@ -38522,6 +38522,11 @@ async function updateExistingCommentWithRetry(workflow, templateSource) {
             ...updatedSummaryData,
             datetime: new Date().toISOString()
         });
+        // Add a random delay before updating to avoid potential race conditions
+        const maxDelay = 30000; // 30 seconds
+        const randomDelay = Math.floor(Math.random() * maxDelay);
+        core.info(`Adding random delay of ${randomDelay}ms before updating comment to reduce collision probability`);
+        await sleep(randomDelay);
         // Final verification immediately before update to prevent race conditions
         const finalCheck = await (0, github_2.getCommentById)(github_1.context, Number(comment.id));
         const finalCheckDate = (0, ci_summary_1.parseCreateOrUpdateTime)(finalCheck.body);
