@@ -38303,23 +38303,13 @@ var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (
 }) : function(o, v) {
     o["default"] = v;
 });
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
+var __importStar = (this && this.__importStar) || function (mod) {
+    if (mod && mod.__esModule) return mod;
+    var result = {};
+    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
+    __setModuleDefault(result, mod);
+    return result;
+};
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.getCommentById = exports.getCiSummaryComment = void 0;
 exports.createGitHubClient = createGitHubClient;
@@ -38402,23 +38392,13 @@ var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (
 }) : function(o, v) {
     o["default"] = v;
 });
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
+var __importStar = (this && this.__importStar) || function (mod) {
+    if (mod && mod.__esModule) return mod;
+    var result = {};
+    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
+    __setModuleDefault(result, mod);
+    return result;
+};
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.runAction = runAction;
 const core = __importStar(__nccwpck_require__(7484));
@@ -38443,29 +38423,28 @@ async function runAction() {
             datetime: new Date().toISOString()
         });
         if (inputs.initJsonFilePath) {
-            console.log('DEBUG: initial markdown:', markdown);
+            core.debug(`Initial markdown: ${markdown}`);
         }
         if (inputs.pullRequest && github_1.context.eventName === 'pull_request') {
             await handlePullRequestAction(inputs, templateSource, markdown);
         }
     }
     catch (error) {
+        core.debug(`Error: ${JSON.stringify(error)}`);
         handleError(error);
     }
 }
 function getActionInputs() {
-    const workflowRunErrors = core.getInput('workflow-run-errors');
-    const parsedErrors = workflowRunErrors
-        ? JSON.parse(workflowRunErrors)
-        : undefined;
+    const errors = core.getInput('errors');
+    const parsedErrors = errors ? JSON.parse(errors) : undefined;
     return {
         initJsonFilePath: core.getInput('init-json-file-path'),
         pullRequest: core.getInput('pull-request'),
         workflow: {
-            name: core.getInput('workflow-name'),
-            required: core.getInput('workflow-required') === 'true',
-            status: core.getInput('workflow-status'),
-            runUrl: core.getInput('workflow-run-url'),
+            name: core.getInput('name'),
+            required: core.getInput('required') === 'true',
+            status: core.getInput('status'),
+            htmlURL: core.getInput('html-url'),
             errors: parsedErrors
         }
     };
@@ -38477,14 +38456,14 @@ function validateInputs(inputs) {
         (workflow.name ||
             workflow.required ||
             workflow.status ||
-            workflow.runUrl ||
+            workflow.htmlURL ||
             workflow.errors)) {
         throw new Error('When providing init-json-file-path, do not provide any workflow-related inputs');
     }
     // Validate required workflow inputs when not using init-json-file-path
     if (!initJsonFilePath &&
-        (!workflow.name || workflow.required === undefined || !workflow.runUrl)) {
-        throw new Error('Missing required workflow inputs workflow-name, workflow-required, workflow-run-url');
+        (!workflow.name || workflow.required === undefined || !workflow.htmlURL)) {
+        throw new Error('Missing required workflow inputs name, required, html-url');
     }
 }
 /**
@@ -38511,15 +38490,14 @@ async function updateExistingCommentWithRetry(workflow, templateSource) {
             throw new Error('No CI Summary comment found. Please initialize a CI Summary first by running this action with init-json-file-path input.');
         }
         // Parse the current data
-        const summaryData = (0, ci_summary_1.parseCiSummaryCommentToData)(comment.body);
+        const currentData = (0, ci_summary_1.parseCiSummaryCommentToData)(comment.body);
         // Update workflow data
-        const updatedSummaryData = updateWorkflowInSummary(summaryData, workflow);
-        console.log('DEBUG: current comment:', comment.body);
-        console.log('DEBUG: parsed data:', summaryData);
-        console.log('DEBUG: updated data:', updatedSummaryData);
+        const newData = updateWorkflowInSummary(currentData, workflow);
+        core.debug(`Current data: ${JSON.stringify(currentData)}`);
+        core.debug(`New data: ${JSON.stringify(newData)}`);
         // Generate the new markdown
         const newMarkdown = (0, markdown_utils_1.generateMarkdown)(templateSource, {
-            ...updatedSummaryData,
+            ...newData,
             datetime: new Date().toISOString()
         });
         // Add a random delay before updating to avoid potential race conditions
@@ -38528,12 +38506,12 @@ async function updateExistingCommentWithRetry(workflow, templateSource) {
         core.info(`Adding random delay of ${randomDelay}ms before updating comment to reduce collision probability`);
         await sleep(randomDelay);
         // Final verification immediately before update to prevent race conditions
-        const finalCheck = await (0, github_2.getCommentById)(github_1.context, Number(comment.id));
-        const finalCheckDate = (0, ci_summary_1.parseCreateOrUpdateTime)(finalCheck.body);
-        console.log('DEBUG: original datetime:', summaryData.datetime);
-        console.log('DEBUG: final check datetime:', finalCheckDate);
-        if (finalCheckDate !== summaryData.datetime) {
+        const commentBeforeUpdate = await (0, github_2.getCommentById)(github_1.context, Number(comment.id));
+        const commentBeforeUpdateDatetime = (0, ci_summary_1.parseCreateOrUpdateTime)(commentBeforeUpdate.body);
+        if (commentBeforeUpdateDatetime !== currentData.datetime) {
             core.info(`Detected concurrent update right before committing changes (attempt ${attempt}/${MAX_RETRY_ATTEMPTS})`);
+            core.debug(`Datetime from parsed comment: ${currentData.datetime}`);
+            core.debug(`Datetime from newest comment (before update): ${commentBeforeUpdateDatetime}`);
             if (attempt < MAX_RETRY_ATTEMPTS) {
                 await sleep(RETRY_DELAY_MS * attempt); // Exponential backoff
                 continue;
@@ -38550,7 +38528,7 @@ async function updateExistingCommentWithRetry(workflow, templateSource) {
             body: newMarkdown
         });
         core.info('Successfully updated CI Summary comment');
-        console.log('DEBUG: Update to:', newMarkdown);
+        core.debug(`New markdown: ${newMarkdown}`);
         return;
     }
 }
@@ -38562,7 +38540,7 @@ function updateWorkflowInSummary(summaryData, workflow) {
         name: workflow.name,
         required: workflow.required,
         status: workflow.status,
-        reference: workflow.runUrl,
+        reference: workflow.htmlURL,
         errors: workflow.errors
     };
     const index = summaryData.items.findIndex(item => item.name === workflow.name);
@@ -38677,17 +38655,41 @@ const parseCiSummaryCommentToData = (currentReport) => {
         }
         const referenceMatch = content.match(/href=['"](.*?)['"]/);
         const reference = referenceMatch ? referenceMatch[1] : null;
-        // Extract errors from details section
+        // Extract errors from details section (table format)
         let errors = [];
-        const errorsMatch = content.match(/<details><summary>Errors details \((\d+)\)<\/summary><ul>([\s\S]*?)<\/ul><\/details>/);
+        const errorsMatch = content.match(/<details[^>]*><summary>Errors details \((\d+)\)<\/summary><table><thead>[\s\S]*?<\/thead><tbody>([\s\S]*?)<\/tbody><\/table><\/details>/);
         if (errorsMatch) {
-            const errorsList = errorsMatch[2];
-            const errorItems = errorsList.match(/<li>(.*?)<\/li>/g);
-            if (errorItems && errorItems.length > 0) {
-                errors = errorItems.map(item => {
-                    // Extract text between <li> and </li> tags
-                    const errorText = item.replace(/<li>(.*?)<\/li>/, '$1');
-                    return errorText;
+            const tableBody = errorsMatch[2];
+            const tableRows = tableBody.match(/<tr>([\s\S]*?)<\/tr>/g);
+            if (tableRows && tableRows.length > 0) {
+                errors = tableRows.map(row => {
+                    const cells = row.match(/<td>([\s\S]*?)<\/td>/g) || [];
+                    // Extract cell contents: Path, Message, Severity, Code, Approvals
+                    const pathCell = cells[0]?.replace(/<td>([\s\S]*?)<\/td>/, '$1') || '';
+                    const messageCell = cells[1]?.replace(/<td>([\s\S]*?)<\/td>/, '$1') || '';
+                    const severityCell = cells[2]?.replace(/<td>([\s\S]*?)<\/td>/, '$1') || '';
+                    const codeCell = cells[3]?.replace(/<td>([\s\S]*?)<\/td>/, '$1') || '';
+                    const approvalsCell = cells[4]?.replace(/<td>([\s\S]*?)<\/td>/, '$1') || '';
+                    // Parse approvals (comma-separated values)
+                    const approvals = approvalsCell === '-'
+                        ? []
+                        : approvalsCell
+                            .split(',')
+                            .map(approval => approval.trim())
+                            .filter(Boolean);
+                    const error = {
+                        message: messageCell,
+                        severity: severityCell,
+                        code: {
+                            value: codeCell === '-' ? '' : codeCell
+                        },
+                        approvals: approvals
+                    };
+                    // Add location if path is provided
+                    if (pathCell && pathCell !== '-') {
+                        error.location = { path: pathCell };
+                    }
+                    return error;
                 });
             }
         }
@@ -38735,23 +38737,13 @@ var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (
 }) : function(o, v) {
     o["default"] = v;
 });
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
+var __importStar = (this && this.__importStar) || function (mod) {
+    if (mod && mod.__esModule) return mod;
+    var result = {};
+    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
+    __setModuleDefault(result, mod);
+    return result;
+};
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.formatDurationHumanReadableHelper = formatDurationHumanReadableHelper;
 const handlebars = __importStar(__nccwpck_require__(8508));
@@ -38798,23 +38790,13 @@ var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (
 }) : function(o, v) {
     o["default"] = v;
 });
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
+var __importStar = (this && this.__importStar) || function (mod) {
+    if (mod && mod.__esModule) return mod;
+    var result = {};
+    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
+    __setModuleDefault(result, mod);
+    return result;
+};
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.eqHelper = eqHelper;
 const handlebars = __importStar(__nccwpck_require__(8508));
@@ -38867,23 +38849,13 @@ var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (
 }) : function(o, v) {
     o["default"] = v;
 });
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
+var __importStar = (this && this.__importStar) || function (mod) {
+    if (mod && mod.__esModule) return mod;
+    var result = {};
+    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
+    __setModuleDefault(result, mod);
+    return result;
+};
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.uppercaseHelper = uppercaseHelper;
 const handlebars = __importStar(__nccwpck_require__(8508));
@@ -38917,23 +38889,13 @@ var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (
 }) : function(o, v) {
     o["default"] = v;
 });
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
+var __importStar = (this && this.__importStar) || function (mod) {
+    if (mod && mod.__esModule) return mod;
+    var result = {};
+    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
+    __setModuleDefault(result, mod);
+    return result;
+};
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.readTemplate = readTemplate;
 exports.readJsonFile = readJsonFile;
@@ -38983,23 +38945,13 @@ var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (
 }) : function(o, v) {
     o["default"] = v;
 });
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
+var __importStar = (this && this.__importStar) || function (mod) {
+    if (mod && mod.__esModule) return mod;
+    var result = {};
+    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
+    __setModuleDefault(result, mod);
+    return result;
+};
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.getAllGitHubContext = getAllGitHubContext;
 const github = __importStar(__nccwpck_require__(3228));
@@ -39348,23 +39300,13 @@ var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (
 }) : function(o, v) {
     o["default"] = v;
 });
-var __importStar = (this && this.__importStar) || (function () {
-    var ownKeys = function(o) {
-        ownKeys = Object.getOwnPropertyNames || function (o) {
-            var ar = [];
-            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
-            return ar;
-        };
-        return ownKeys(o);
-    };
-    return function (mod) {
-        if (mod && mod.__esModule) return mod;
-        var result = {};
-        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
-        __setModuleDefault(result, mod);
-        return result;
-    };
-})();
+var __importStar = (this && this.__importStar) || function (mod) {
+    if (mod && mod.__esModule) return mod;
+    var result = {};
+    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
+    __setModuleDefault(result, mod);
+    return result;
+};
 Object.defineProperty(exports, "__esModule", ({ value: true }));
 exports.compileTemplate = compileTemplate;
 const handlebars = __importStar(__nccwpck_require__(8508));

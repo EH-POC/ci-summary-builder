@@ -1,9 +1,11 @@
+import { Error } from 'src/types'
+
 type CiSummaryItem = {
   name: string
   required: boolean
   status: string
   reference: string | null
-  errors?: string[]
+  errors?: Error[]
 }
 
 export const parseCiSummaryCommentToData = (
@@ -67,20 +69,53 @@ export const parseCiSummaryCommentToData = (
     const referenceMatch = content.match(/href=['"](.*?)['"]/)
     const reference = referenceMatch ? referenceMatch[1] : null
 
-    // Extract errors from details section
-    let errors: string[] = []
+    // Extract errors from details section (table format)
+    let errors: Error[] = []
     const errorsMatch = content.match(
-      /<details><summary>Errors details \((\d+)\)<\/summary><ul>([\s\S]*?)<\/ul><\/details>/
+      /<details[^>]*><summary>Errors details \((\d+)\)<\/summary><table><thead>[\s\S]*?<\/thead><tbody>([\s\S]*?)<\/tbody><\/table><\/details>/
     )
     if (errorsMatch) {
-      const errorsList = errorsMatch[2]
-      const errorItems = errorsList.match(/<li>(.*?)<\/li>/g)
+      const tableBody = errorsMatch[2]
+      const tableRows = tableBody.match(/<tr>([\s\S]*?)<\/tr>/g)
 
-      if (errorItems && errorItems.length > 0) {
-        errors = errorItems.map(item => {
-          // Extract text between <li> and </li> tags
-          const errorText = item.replace(/<li>(.*?)<\/li>/, '$1')
-          return errorText
+      if (tableRows && tableRows.length > 0) {
+        errors = tableRows.map(row => {
+          const cells = row.match(/<td>([\s\S]*?)<\/td>/g) || []
+
+          // Extract cell contents: Path, Message, Severity, Code, Approvals
+          const pathCell = cells[0]?.replace(/<td>([\s\S]*?)<\/td>/, '$1') || ''
+          const messageCell =
+            cells[1]?.replace(/<td>([\s\S]*?)<\/td>/, '$1') || ''
+          const severityCell =
+            cells[2]?.replace(/<td>([\s\S]*?)<\/td>/, '$1') || ''
+          const codeCell = cells[3]?.replace(/<td>([\s\S]*?)<\/td>/, '$1') || ''
+          const approvalsCell =
+            cells[4]?.replace(/<td>([\s\S]*?)<\/td>/, '$1') || ''
+
+          // Parse approvals (comma-separated values)
+          const approvals =
+            approvalsCell === '-'
+              ? []
+              : approvalsCell
+                  .split(',')
+                  .map(approval => approval.trim())
+                  .filter(Boolean)
+
+          const error: Error = {
+            message: messageCell,
+            severity: severityCell,
+            code: {
+              value: codeCell === '-' ? '' : codeCell
+            },
+            approvals: approvals
+          }
+
+          // Add location if path is provided
+          if (pathCell && pathCell !== '-') {
+            error.location = { path: pathCell }
+          }
+
+          return error
         })
       }
     }

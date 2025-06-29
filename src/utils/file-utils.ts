@@ -7,11 +7,11 @@ export function readTemplate(filePath: string): string {
       `File must have a handlebars or markdown extension: ${filePath}`
     )
   }
-  
+
   // Resolve path relative to the action's directory structure
   const actionDir = path.dirname(require.resolve('../../package.json'))
   const absolutePath = path.join(actionDir, filePath)
-  
+
   if (!fs.existsSync(absolutePath)) {
     throw new Error(`Template file not found: ${absolutePath}`)
   }

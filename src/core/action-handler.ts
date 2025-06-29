@@ -10,6 +10,7 @@ import {
   parseCiSummaryCommentToData,
   parseCreateOrUpdateTime
 } from 'src/helpers/ci-summary'
+import { Error } from 'src/types'
 import { readJsonFile, readTemplate } from '../utils/file-utils'
 import { generateMarkdown } from '../utils/markdown-utils'
 
@@ -22,8 +23,8 @@ type WorkflowData = {
   name: string
   required: boolean
   status: string
-  runUrl: string
-  errors?: string[]
+  htmlURL: string
+  errors?: Error[]
 }
 
 type ActionInputs = {
@@ -47,31 +48,30 @@ export async function runAction(): Promise<void> {
       datetime: new Date().toISOString()
     })
     if (inputs.initJsonFilePath) {
-      console.log('DEBUG: initial markdown:', markdown)
+      core.debug(`Initial markdown: ${markdown}`)
     }
 
     if (inputs.pullRequest && context.eventName === 'pull_request') {
       await handlePullRequestAction(inputs, templateSource, markdown)
     }
   } catch (error) {
+    core.debug(`Error: ${JSON.stringify(error)}`)
     handleError(error)
   }
 }
 
 function getActionInputs(): ActionInputs {
-  const workflowRunErrors = core.getInput('workflow-run-errors')
-  const parsedErrors = workflowRunErrors
-    ? JSON.parse(workflowRunErrors)
-    : undefined
+  const errors = core.getInput('errors')
+  const parsedErrors = errors ? JSON.parse(errors) : undefined
 
   return {
     initJsonFilePath: core.getInput('init-json-file-path'),
     pullRequest: core.getInput('pull-request'),
     workflow: {
-      name: core.getInput('workflow-name'),
-      required: core.getInput('workflow-required') === 'true',
-      status: core.getInput('workflow-status'),
-      runUrl: core.getInput('workflow-run-url'),
+      name: core.getInput('name'),
+      required: core.getInput('required') === 'true',
+      status: core.getInput('status'),
+      htmlURL: core.getInput('html-url'),
       errors: parsedErrors
     }
   }
@@ -86,7 +86,7 @@ function validateInputs(inputs: ActionInputs): void {
     (workflow.name ||
       workflow.required ||
       workflow.status ||
-      workflow.runUrl ||
+      workflow.htmlURL ||
       workflow.errors)
   ) {
     throw new Error(
@@ -97,11 +97,9 @@ function validateInputs(inputs: ActionInputs): void {
   // Validate required workflow inputs when not using init-json-file-path
   if (
     !initJsonFilePath &&
-    (!workflow.name || workflow.required === undefined || !workflow.runUrl)
+    (!workflow.name || workflow.required === undefined || !workflow.htmlURL)
   ) {
-    throw new Error(
-      'Missing required workflow inputs workflow-name, workflow-required, workflow-run-url'
-    )
+    throw new Error('Missing required workflow inputs name, required, html-url')
   }
 }
 
@@ -148,18 +146,17 @@ async function updateExistingCommentWithRetry(
     }
 
     // Parse the current data
-    const summaryData = parseCiSummaryCommentToData(comment.body)
+    const currentData = parseCiSummaryCommentToData(comment.body)
 
     // Update workflow data
-    const updatedSummaryData = updateWorkflowInSummary(summaryData, workflow)
+    const newData = updateWorkflowInSummary(currentData, workflow)
 
-    console.log('DEBUG: current comment:', comment.body)
-    console.log('DEBUG: parsed data:', summaryData)
-    console.log('DEBUG: updated data:', updatedSummaryData)
+    core.debug(`Current data: ${JSON.stringify(currentData)}`)
+    core.debug(`New data: ${JSON.stringify(newData)}`)
 
     // Generate the new markdown
     const newMarkdown = generateMarkdown(templateSource, {
-      ...updatedSummaryData,
+      ...newData,
       datetime: new Date().toISOString()
     })
 
@@ -172,15 +169,21 @@ async function updateExistingCommentWithRetry(
     await sleep(randomDelay)
 
     // Final verification immediately before update to prevent race conditions
-    const finalCheck = await getCommentById(context, Number(comment.id))
-    const finalCheckDate = parseCreateOrUpdateTime(finalCheck.body)
+    const commentBeforeUpdate = await getCommentById(
+      context,
+      Number(comment.id)
+    )
+    const commentBeforeUpdateDatetime = parseCreateOrUpdateTime(
+      commentBeforeUpdate.body
+    )
 
-    console.log('DEBUG: original datetime:', summaryData.datetime)
-    console.log('DEBUG: final check datetime:', finalCheckDate)
-
-    if (finalCheckDate !== summaryData.datetime) {
+    if (commentBeforeUpdateDatetime !== currentData.datetime) {
       core.info(
         `Detected concurrent update right before committing changes (attempt ${attempt}/${MAX_RETRY_ATTEMPTS})`
+      )
+      core.debug(`Datetime from parsed comment: ${currentData.datetime}`)
+      core.debug(
+        `Datetime from newest comment (before update): ${commentBeforeUpdateDatetime}`
       )
 
       if (attempt < MAX_RETRY_ATTEMPTS) {
@@ -202,7 +205,7 @@ async function updateExistingCommentWithRetry(
     })
 
     core.info('Successfully updated CI Summary comment')
-    console.log('DEBUG: Update to:', newMarkdown)
+    core.debug(`New markdown: ${newMarkdown}`)
     return
   }
 }
@@ -218,7 +221,7 @@ function updateWorkflowInSummary(
     name: workflow.name,
     required: workflow.required,
     status: workflow.status,
-    reference: workflow.runUrl,
+    reference: workflow.htmlURL,
     errors: workflow.errors
   }
 

@@ -14,19 +14,19 @@ inputs:
   init-json-file-path:
     description: 'Path to the JSON file to initialize the CI summary.'
     required: false
-  workflow-name:
+  name:
     description: 'The name of the workflow that need to be reported'
     required: false
-  workflow-required:
+  required:
     description: 'Whether the workflow is required or optional'
     required: false
-  workflow-status:
+  status:
     description: 'The status of the workflow'
     required: false
-  workflow-run-url:
+  html-url:
     description: 'The URL of the workflow run'
     required: false
-  workflow-run-errors:
+  errors:
     description: 'The errors of the workflow run'
     required: false
   pull-request:
