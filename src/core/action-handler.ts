@@ -161,7 +161,7 @@ async function updateExistingCommentWithRetry(
     })
 
     // Add a random delay before updating to avoid potential race conditions
-    const maxDelay = 30000 // 30 seconds
+    const maxDelay = 15000 // 15 seconds
     const randomDelay = Math.floor(Math.random() * maxDelay)
     core.info(
       `Adding random delay of ${randomDelay}ms before updating comment to reduce collision probability`

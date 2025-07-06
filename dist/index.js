@@ -1,4 +1,4 @@
-require('./sourcemap-register.js');/******/ (() => { // webpackBootstrap
+/******/ (() => { // webpackBootstrap
 /******/ 	var __webpack_modules__ = ({
 
 /***/ 4914:
@@ -38501,7 +38501,7 @@ async function updateExistingCommentWithRetry(workflow, templateSource) {
             datetime: new Date().toISOString()
         });
         // Add a random delay before updating to avoid potential race conditions
-        const maxDelay = 30000; // 30 seconds
+        const maxDelay = 15000; // 15 seconds
         const randomDelay = Math.floor(Math.random() * maxDelay);
         core.info(`Adding random delay of ${randomDelay}ms before updating comment to reduce collision probability`);
         await sleep(randomDelay);
@@ -41392,4 +41392,3 @@ run();
 module.exports = __webpack_exports__;
 /******/ })()
 ;
-//# sourceMappingURL=index.js.map
